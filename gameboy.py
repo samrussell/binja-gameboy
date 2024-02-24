@@ -38,13 +38,14 @@ class LR35902(Architecture):
         'L': RegisterInfo('HL', 1, 0),
     }
 
-    flags = ["z", "n", "h", "c"]
+    flags = ["z", "n", "h", "c", "i"]
     flag_write_types = ["*", "czn", "zn"]
     flag_roles = {
         'z': FlagRole.ZeroFlagRole,
         'n': FlagRole.NegativeSignFlagRole,
         'h': FlagRole.HalfCarryFlagRole,
         'c': FlagRole.CarryFlagRole,
+        'i': FlagRole.SpecialFlagRole,
     }
     flags_written_by_flag_write_type = {
         "*": ["c", "z", "h", "n"],
@@ -54,6 +55,8 @@ class LR35902(Architecture):
     flags_required_for_flag_condition = {
         LowLevelILFlagCondition.LLFC_E:   ['z'],
         LowLevelILFlagCondition.LLFC_NE:  ['z'],
+        LowLevelILFlagCondition.LLFC_ULT:  ['c'],
+        LowLevelILFlagCondition.LLFC_UGE:  ['c'],
     }
 
     stack_pointer = "SP"
@@ -314,7 +317,7 @@ class LR35902(Architecture):
         return tokens, ins_len
 
     def get_instruction_low_level_il(self, data, addr, il: LowLevelILFunction):
-        ins_mnem, ins_len, operands, _, _ = self._decode_instruction(data, addr)
+        ins_mnem, ins_len, ins_operands, _, _ = self._decode_instruction(data, addr)
         if not ins_mnem:
             return None
 
@@ -346,10 +349,18 @@ class LR35902(Architecture):
             return ins_len
         elif ins_mnem == 'JR':
             offset = struct.unpack('<b', data[1:2])[0]
-            if opcode == 0x20:
+            if opcode == 0x18:
+                # unconditional jump
+                il.append(il.jump(il.const(2, addr + ins_len + offset)))
+                return ins_len
+            elif opcode == 0x20:
                 cond = il.flag_condition(LowLevelILFlagCondition.LLFC_NE)
             elif opcode == 0x28:
                 cond = il.flag_condition(LowLevelILFlagCondition.LLFC_E)
+            elif opcode == 0x30:
+                cond = il.flag_condition(LowLevelILFlagCondition.LLFC_UGE)
+            elif opcode == 0x38:
+                cond = il.flag_condition(LowLevelILFlagCondition.LLFC_ULT)
             else:
                 return None
             # if there are no flags to process here then assume the code is wrong
@@ -374,3 +385,50 @@ class LR35902(Architecture):
                 il.mark_label(taken_label)
                 il.append(il.jump(il.const(2, addr + ins_len + offset)))
             return ins_len
+        elif ins_mnem == 'XOR':
+            if opcode == 0xee:
+                # xor A, imm8
+                arg = struct.unpack('<B', data[1:2])[0]
+                il.append(il.set_reg(1, il.reg(1, 'A'), il.xor_expr(1, il.reg(1, 'A'), il.const(1, arg))))
+            elif opcode != 0xae: # ignore (HL) for now
+                # xor A, reg
+                il.append(il.set_reg(1, il.reg(1, 'A'), il.xor_expr(1, il.reg(1, 'A'), il.reg(1, ins_operands[0]))))
+            return ins_len
+        elif ins_mnem == 'LD':
+            # we're doing this one at a time and will refactor when it makes sense
+            if (opcode & 0xc7) == 0x06:
+                # mov reg, imm
+                arg = struct.unpack('<B', data[1:2])[0]
+                if opcode == 0x36:
+                    il.append(il.store(1, il.reg(2, 'HL'), il.const(1, arg)))
+                else:
+                    il.append(il.set_reg(1, il.reg(1, 'A'), il.const(1, arg)))
+                return ins_len
+            elif opcode == 0xea:
+                offset = struct.unpack('<H', data[1:3])[0]
+                il.append(il.store(1, il.const(2, offset), il.reg(1, 'A')))
+                return ins_len
+            elif (opcode & 0xcf) == 0x01:
+                arg = struct.unpack('<H', data[1:3])[0]
+                il.append(il.set_reg(2, il.reg(2, ins_operands[0]), il.const(2, arg)))
+                return ins_len
+        elif ins_mnem == 'LDH':
+            # this writes to an io port at a high mem location
+            # the disasm view displays this nicely but we'll settle for just making it write mem
+            offset = 0xFF00 + struct.unpack('<B', data[1:2])[0]
+            if opcode == 0xe0:
+                il.append(il.store(1, il.const(2, offset), il.reg(1, 'A')))
+            else:
+                il.append(il.set_reg(1, il.reg(1, 'A'), il.load(1, il.const(2, offset))))
+            return ins_len
+        elif ins_mnem == 'DI':
+            il.append(il.set_flag('i', il.const(1, 0)))
+            return ins_len
+        elif ins_mnem == 'EI':
+            il.append(il.set_flag('i', il.const(1, 1)))
+            return ins_len
+        elif ins_mnem == 'CALL':
+            if opcode == 0xcd:
+                offset = struct.unpack('<H', data[1:3])[0]
+                il.append(il.call(il.const(2, offset)))
+                return ins_len
