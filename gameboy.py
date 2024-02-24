@@ -4,10 +4,10 @@ import re
 import struct
 
 from binaryninja.architecture import Architecture
-from binaryninja.enums import InstructionTextTokenType, FlagRole, BranchType
+from binaryninja.enums import InstructionTextTokenType, FlagRole, BranchType, LowLevelILFlagCondition
 from binaryninja.function import RegisterInfo, InstructionInfo, InstructionTextToken
 from binaryninja.log import log_info
-from binaryninja.lowlevelil import LowLevelILFunction
+from binaryninja.lowlevelil import LowLevelILFunction, LowLevelILLabel
 
 
 class LR35902(Architecture):
@@ -50,6 +50,10 @@ class LR35902(Architecture):
         "*": ["c", "z", "h", "n"],
         "czn": ["c", "z", "n"],
         "zn": ["z", "n"],
+    }
+    flags_required_for_flag_condition = {
+        LowLevelILFlagCondition.LLFC_E:   ['z'],
+        LowLevelILFlagCondition.LLFC_NE:  ['z'],
     }
 
     stack_pointer = "SP"
@@ -310,4 +314,63 @@ class LR35902(Architecture):
         return tokens, ins_len
 
     def get_instruction_low_level_il(self, data, addr, il: LowLevelILFunction):
-        return None
+        ins_mnem, ins_len, operands, _, _ = self._decode_instruction(data, addr)
+        if not ins_mnem:
+            return None
+
+        opcode = data[0]
+        
+        if ins_mnem == 'JP':
+            if opcode == 0xe9:
+                il.append(il.jump(il.reg(2, 'HL')))
+            else:
+                arg = struct.unpack('<H', data[1:3])[0]
+                if opcode == 0xca or opcode == 0xda:
+                    #result.add_branch(BranchType.TrueBranch, arg)
+                    #result.add_branch(BranchType.FalseBranch, ins_end)
+                    pass
+                elif opcode == 0xc2 or opcode == 0xd2:
+                    #result.add_branch(BranchType.TrueBranch, ins_end)
+                    #result.add_branch(BranchType.FalseBranch, arg)
+                    pass
+                elif opcode == 0xc3:
+                    il.append(il.jump(il.const(2, arg)))
+                    return ins_len
+                    #result.add_branch(BranchType.UnconditionalBranch, arg)
+        elif ins_mnem == 'NOP':
+            il.append(il.nop())
+            return ins_len
+        elif ins_mnem == 'CP':
+            arg = struct.unpack('<B', data[1:2])[0]
+            il.append(il.sub(1, il.reg(1, 'A'), il.const(1, arg), '*'))
+            return ins_len
+        elif ins_mnem == 'JR':
+            offset = struct.unpack('<b', data[1:2])[0]
+            if opcode == 0x20:
+                cond = il.flag_condition(LowLevelILFlagCondition.LLFC_NE)
+            elif opcode == 0x28:
+                cond = il.flag_condition(LowLevelILFlagCondition.LLFC_E)
+            else:
+                return None
+            # if there are no flags to process here then assume the code is wrong
+            if not cond:
+                print("addr %X, cond = 0" % addr)
+                return None
+            untaken_label = il.get_label_for_address(il.arch, addr + ins_len)
+            taken_label   = il.get_label_for_address(il.arch, addr + ins_len + offset)
+            if taken_label is None:
+                mark_taken = True
+                taken_label = LowLevelILLabel()
+            else:
+                mark_taken = False
+
+            print("addr %X, handle: %s" % (addr, il.handle))
+            label1 = LowLevelILLabel()
+            label2 = LowLevelILLabel()
+            print("if_expr(%s, %s, %s)" % (cond, label1, label2))
+            il.if_expr(cond, label1, label2)
+            il.append(il.if_expr(cond, taken_label, untaken_label))
+            if mark_taken:
+                il.mark_label(taken_label)
+                il.append(il.jump(il.const(2, addr + ins_len + offset)))
+            return ins_len

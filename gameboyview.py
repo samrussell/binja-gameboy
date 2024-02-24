@@ -177,6 +177,9 @@ class GameboyRomView(BinaryView):
     def perform_get_entry_point(self):
         return self.START_ADDR
 
+    def perform_get_address_size(self):
+        return 8
+
 
 #NUM_BANKS = 0x200
 NUM_BANKS = 1
