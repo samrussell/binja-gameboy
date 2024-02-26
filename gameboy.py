@@ -327,7 +327,7 @@ class LR35902(Architecture):
             if opcode == 0xe9:
                 il.append(il.jump(il.reg(2, 'HL')))
             else:
-                arg = struct.unpack('<H', data[1:3])[0]
+                dest_address = struct.unpack('<H', data[1:3])[0]
                 if opcode == 0xca or opcode == 0xda:
                     #result.add_branch(BranchType.TrueBranch, arg)
                     #result.add_branch(BranchType.FalseBranch, ins_end)
@@ -337,9 +337,13 @@ class LR35902(Architecture):
                     #result.add_branch(BranchType.FalseBranch, arg)
                     pass
                 elif opcode == 0xc3:
-                    il.append(il.jump(il.const(2, arg)))
+                    print("%x: JP %x" % (addr, dest_address))
+                    label = il.get_label_for_address(il.arch, dest_address)
+                    if label:
+                        il.append(il.goto(label))
+                    else:
+                        il.append(il.jump(il.const_pointer(2, dest_address)))
                     return ins_len
-                    #result.add_branch(BranchType.UnconditionalBranch, arg)
         elif ins_mnem == 'NOP':
             il.append(il.nop())
             return ins_len
@@ -351,7 +355,13 @@ class LR35902(Architecture):
             offset = struct.unpack('<b', data[1:2])[0]
             if opcode == 0x18:
                 # unconditional jump
-                il.append(il.jump(il.const(2, addr + ins_len + offset)))
+                dest_address = addr + ins_len + offset
+                print("%x: JR %x" % (addr, dest_address))
+                label = il.get_label_for_address(il.arch, dest_address)
+                if label:
+                    il.append(il.goto(label))
+                else:
+                    il.append(il.jump(il.const_pointer(2, dest_address)))
                 return ins_len
             elif opcode == 0x20:
                 cond = il.flag_condition(LowLevelILFlagCondition.LLFC_NE)
@@ -367,42 +377,74 @@ class LR35902(Architecture):
             if not cond:
                 print("addr %X, cond = 0" % addr)
                 return None
-            untaken_label = il.get_label_for_address(il.arch, addr + ins_len)
-            taken_label   = il.get_label_for_address(il.arch, addr + ins_len + offset)
-            if taken_label is None:
-                mark_taken = True
-                taken_label = LowLevelILLabel()
-            else:
-                mark_taken = False
 
-            print("addr %X, handle: %s" % (addr, il.handle))
-            label1 = LowLevelILLabel()
-            label2 = LowLevelILLabel()
-            print("if_expr(%s, %s, %s)" % (cond, label1, label2))
-            il.if_expr(cond, label1, label2)
-            il.append(il.if_expr(cond, taken_label, untaken_label))
-            if mark_taken:
-                il.mark_label(taken_label)
-                il.append(il.jump(il.const(2, addr + ins_len + offset)))
+            print("%x: JR %x %x" % (addr, addr + ins_len, addr + ins_len + offset))
+            true_label = il.get_label_for_address(il.arch, addr + ins_len + offset)
+            false_label = il.get_label_for_address(il.arch, addr + ins_len)
+            
+            if true_label and false_label:
+                il.append(il.if_expr(cond, true_label, false_label))
+            else:
+                new_true_label = LowLevelILLabel()
+                new_false_label = LowLevelILLabel()
+                il.append(il.if_expr(cond, new_true_label, new_false_label))
+                il.mark_label(new_true_label)
+                if true_label:
+                    goto_or_jmp = il.goto(true_label)
+                else:
+                    goto_or_jmp = il.jump(il.const_pointer(2, addr + ins_len + offset))
+                il.append(goto_or_jmp)
+                il.mark_label(new_false_label)
+
             return ins_len
         elif ins_mnem == 'XOR':
             if opcode == 0xee:
                 # xor A, imm8
                 arg = struct.unpack('<B', data[1:2])[0]
                 il.append(il.set_reg(1, il.reg(1, 'A'), il.xor_expr(1, il.reg(1, 'A'), il.const(1, arg))))
-            elif opcode != 0xae: # ignore (HL) for now
+            elif opcode != 0xae:
                 # xor A, reg
                 il.append(il.set_reg(1, il.reg(1, 'A'), il.xor_expr(1, il.reg(1, 'A'), il.reg(1, ins_operands[0]))))
+            else:
+                # xor A, (HL)
+                il.append(il.set_reg(1, il.reg(1, 'A'), il.xor_expr(1, il.reg(1, 'A'), il.load(1, il.reg(2, 'HL')))))
+            return ins_len
+        elif ins_mnem == 'OR':
+            if opcode == 0xf6:
+                # or A, imm8
+                arg = struct.unpack('<B', data[1:2])[0]
+                il.append(il.set_reg(1, il.reg(1, 'A'), il.or_expr(1, il.reg(1, 'A'), il.const(1, arg))))
+            elif opcode != 0xb6:
+                # or A, reg
+                il.append(il.set_reg(1, il.reg(1, 'A'), il.or_expr(1, il.reg(1, 'A'), il.reg(1, ins_operands[0]))))
+            else:
+                # or A, (HL)
+                il.append(il.set_reg(1, il.reg(1, 'A'), il.or_expr(1, il.reg(1, 'A'), il.load(1, il.reg(2, 'HL')))))
             return ins_len
         elif ins_mnem == 'LD':
             # we're doing this one at a time and will refactor when it makes sense
             if (opcode & 0xc7) == 0x06:
-                # mov reg, imm
+                # mov reg, imm8
                 arg = struct.unpack('<B', data[1:2])[0]
                 if opcode == 0x36:
                     il.append(il.store(1, il.reg(2, 'HL'), il.const(1, arg)))
                 else:
                     il.append(il.set_reg(1, il.reg(1, 'A'), il.const(1, arg)))
+                return ins_len
+            elif (opcode & 0xc0) == 0x40:
+                if opcode == 0x76:
+                    # halt, not sure how to mark this
+                    il.append(il.breakpoint())
+                else:
+                    if (opcode & 0x7) == 0x06:
+                        src = il.load(1, il.reg(2, 'HL'))
+                    else:
+                        src = il.reg(1, ins_operands[1])
+                    if (opcode & 0x78) == 0x70:
+                        output = il.store(1, il.reg(2, 'HL'), src)
+                    else:
+                        output = il.set_reg(1, il.reg(1, ins_operands[0]), src)
+                    il.append(output)
                 return ins_len
             elif opcode == 0xea:
                 offset = struct.unpack('<H', data[1:3])[0]
@@ -432,3 +474,40 @@ class LR35902(Architecture):
                 offset = struct.unpack('<H', data[1:3])[0]
                 il.append(il.call(il.const(2, offset)))
                 return ins_len
+        elif ins_mnem == 'INC':
+            if (opcode & 0xc7) == 0x04:
+                # 8 bit inc
+                if opcode == 0x34:
+                    original = il.load(1, il.reg(2, 'HL'))
+                    incremented = il.add(1, original, il.const(1, 1))
+                    il.append(il.store(1, il.reg(2, 'HL'), incremented))
+                else:
+                    original = il.reg(1, ins_operands[0])
+                    incremented = il.add(1, original, il.const(1, 1))
+                    il.append(il.set_reg(1, il.reg(1, ins_operands[0]), incremented))
+                return ins_len
+            else:
+                # 16 bit inc
+                original = il.reg(2, ins_operands[0])
+                incremented = il.add(2, original, il.const(1, 1))
+                il.append(il.set_reg(2, il.reg(2, ins_operands[0]), incremented))
+                return ins_len
+        elif ins_mnem == 'DEC':
+            if (opcode & 0xc7) == 0x05:
+                # 8 bit dec
+                if opcode == 0x35:
+                    original = il.load(1, il.reg(2, 'HL'))
+                    incremented = il.sub(1, original, il.const(1, 1))
+                    il.append(il.store(1, il.reg(2, 'HL'), incremented))
+                else:
+                    original = il.reg(1, ins_operands[0])
+                    incremented = il.sub(1, original, il.const(1, 1))
+                    il.append(il.set_reg(1, il.reg(1, ins_operands[0]), incremented))
+                return ins_len
+            else:
+                # 16 bit dec
+                original = il.reg(2, ins_operands[0])
+                incremented = il.sub(2, original, il.const(1, 1))
+                il.append(il.set_reg(2, il.reg(2, ins_operands[0]), incremented))
+                return ins_len
+
