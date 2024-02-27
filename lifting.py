@@ -1042,6 +1042,46 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
                 ),
                 il.const(1, 0)
             )
+        elif op == LowLevelILOperation.LLIL_OR:
+            return il.compare_equal(size,
+                il.or_expr(size,
+                    expressionify(size, operands[0], il),
+                    expressionify(size, operands[1], il),
+                ),
+                il.const(1, 0)
+            )
+        elif op == LowLevelILOperation.LLIL_CMP or op == LowLevelILOperation.LLIL_SUB:
+            return il.compare_equal(size,
+                il.sub(size,
+                    expressionify(size, operands[0], il),
+                    expressionify(size, operands[1], il),
+                ),
+                il.const(1, 0)
+            )
+        elif op == LowLevelILOperation.LLIL_ADD:
+            return il.compare_equal(size,
+                il.add(size,
+                    expressionify(size, operands[0], il),
+                    expressionify(size, operands[1], il),
+                ),
+                il.const(1, 0)
+            )
+        elif op == LowLevelILOperation.LLIL_ADC:
+            return il.add_carry(size,
+                il.add(size,
+                    expressionify(size, operands[0], il),
+                    expressionify(size, operands[1], il),
+                ),
+                il.const(1, 0)
+            )
+        elif op == LowLevelILOperation.LLIL_SBC:
+            return il.sub_borrow(size,
+                il.add(size,
+                    expressionify(size, operands[0], il),
+                    expressionify(size, operands[1], il),
+                ),
+                il.const(1, 0)
+            )
     
     if flag == 'n':
         if op == LowLevelILOperation.LLIL_AND:
@@ -1066,11 +1106,15 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             return il.const(1, 1)
         elif op == LowLevelILOperation.LLIL_XOR:
             return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_OR:
+            return il.const(1, 0)
         
     if flag == 'c':
         if op == LowLevelILOperation.LLIL_AND:
             return il.const(1, 0)
         elif op == LowLevelILOperation.LLIL_XOR:
+            return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_OR:
             return il.const(1, 0)
 
 
