@@ -1002,9 +1002,6 @@ def lift_il(data, addr, il):
 def expressionify(size, foo, il, temps_are_conds=False):
     """ turns the "reg or constant"  operands to get_flag_write_low_level_il()
         into lifted expressions """
-    if isinstance(foo, int):
-        return foo
-
     if isinstance(foo, ILRegister):
         # LowLevelILExpr is different than ILRegister
         if temps_are_conds and LLIL_TEMP(foo.index):
@@ -1050,38 +1047,16 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
                 ),
                 il.const(1, 0)
             )
-        elif op == LowLevelILOperation.LLIL_CMP or op == LowLevelILOperation.LLIL_SUB:
-            return il.compare_equal(size,
-                il.sub(size,
-                    expressionify(size, operands[0], il),
-                    expressionify(size, operands[1], il),
-                ),
-                il.const(1, 0)
-            )
-        elif op == LowLevelILOperation.LLIL_ADD:
-            return il.compare_equal(size,
-                il.add(size,
-                    expressionify(size, operands[0], il),
-                    expressionify(size, operands[1], il),
-                ),
-                il.const(1, 0)
-            )
-        elif op == LowLevelILOperation.LLIL_ADC:
-            return il.add_carry(size,
-                il.add(size,
-                    expressionify(size, operands[0], il),
-                    expressionify(size, operands[1], il),
-                ),
-                il.const(1, 0)
-            )
-        elif op == LowLevelILOperation.LLIL_SBC:
-            return il.sub_borrow(size,
-                il.add(size,
-                    expressionify(size, operands[0], il),
-                    expressionify(size, operands[1], il),
-                ),
-                il.const(1, 0)
-            )
+        # leaving just in case
+        # elif op == LowLevelILOperation.LLIL_SBB:
+        #     return il.sub_borrow(size,
+        #         il.add(size,
+        #             expressionify(size, operands[0], il),
+        #             expressionify(size, operands[1], il),
+        #             il.flag("c"),
+        #         ),
+        #         il.const(1, 0)
+        #     )
     
     if flag == 'n':
         if op == LowLevelILOperation.LLIL_AND:
@@ -1098,7 +1073,7 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             return il.const(1, 0)
         elif op == LowLevelILOperation.LLIL_SUB:
             return il.const(1, 1)
-        elif op == LowLevelILOperation.LLIL_SBC:
+        elif op == LowLevelILOperation.LLIL_SBB:
             return il.const(1, 1)
         
     if flag == 'h':
@@ -1108,6 +1083,39 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             return il.const(1, 0)
         elif op == LowLevelILOperation.LLIL_OR:
             return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_SUB:
+            # only use bottom 4 bits of registers
+            lhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[0], il))
+            rhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[1], il))
+            # perform operation
+            half_operation = il.sub(size, lhs, rhs)
+            # check bit 4
+            return il.test_bit(size, half_operation, il.const(size, 1<<4))
+        elif op == LowLevelILOperation.LLIL_ADD:
+            # only use bottom 4 bits of registers
+            lhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[0], il))
+            rhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[1], il))
+            # perform operation
+            half_operation = il.add(size, lhs, rhs)
+            # check bit 4
+            return il.test_bit(size, half_operation, il.const(size, 1<<4))
+        elif op == LowLevelILOperation.LLIL_ADC:
+            # only use bottom 4 bits of registers
+            lhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[0], il))
+            rhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[1], il))
+            # perform operation
+            half_operation = il.add_carry(size, lhs, rhs, il.flag("c"))
+            # check bit 4
+            return il.test_bit(size, half_operation, il.const(size, 1<<4))
+        elif op == LowLevelILOperation.LLIL_SBB:
+            # only use bottom 4 bits of registers
+            lhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[0], il))
+            rhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[1], il))
+            # perform operation
+            half_operation = il.sub_borrow(size, lhs, rhs, il.flag("c"))
+            # check bit 4
+            return il.test_bit(size, half_operation, il.const(size, 1<<4))
+
         
     if flag == 'c':
         if op == LowLevelILOperation.LLIL_AND:
@@ -1116,5 +1124,48 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             return il.const(1, 0)
         elif op == LowLevelILOperation.LLIL_OR:
             return il.const(1, 0)
+        # others are done but not this one for some reason
+        # rest is standard carry flag stuff
+        elif op == LowLevelILOperation.LLIL_SBB:
+            lhs = expressionify(size, operands[0], il)
+            rhs = expressionify(size, operands[1], il)
+            # perform operation
+            operation = il.sub_borrow(size, lhs, rhs, il.flag("c"))
+            # if we've overflowed then we'll be larger than when we started
+            return il.compare_unsigned_greater_than(size, operation, lhs)
 
+        # elif op == LowLevelILOperation.LLIL_SUB:
+        #     return
+        #     # only use bottom 8 bits of registers, extend to 16 bits if needed
+        #     lhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[0], il)))
+        #     rhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[1], il)))
+        #     # perform operation
+        #     operation = il.sub(2, lhs, rhs)
+        #     # check bit 8
+        #     return il.test_bit(2, operation, il.const(2, 1<<8))
+        # elif op == LowLevelILOperation.LLIL_ADD:
+        #     return
+        #     # only use bottom 8 bits of registers, extend to 16 bits if needed
+        #     lhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[0], il)))
+        #     rhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[1], il)))
+        #     # perform operation
+        #     operation = il.add(2, lhs, rhs)
+        #     # check bit 8
+        #     return il.test_bit(2, operation, il.const(2, 1<<8))
+        # elif op == LowLevelILOperation.LLIL_ADC:
+        #     # only use bottom 8 bits of registers, extend to 16 bits if needed
+        #     lhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[0], il)))
+        #     rhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[1], il)))
+        #     # perform operation
+        #     operation = il.add_carry(2, lhs, rhs, il.flag("c"))
+        #     # check bit 8
+        #     return il.test_bit(2, operation, il.const(2, 1<<8))
+        # elif op == LowLevelILOperation.LLIL_SBB:
+        #     # only use bottom 8 bits of registers, extend to 16 bits if needed
+        #     lhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[0], il)))
+        #     rhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[1], il)))
+        #     # perform operation
+        #     operation = il.sub_borrow(2, lhs, rhs, il.flag("c"))
+        #     # check bit 8
+        #     return il.test_bit(2, operation, il.const(2, 1<<8))
 

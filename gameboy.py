@@ -43,7 +43,7 @@ class LR35902(Architecture):
     flag_write_types = ["*", "znh", "nhc", "nh"]
     flag_roles = {
         'z': FlagRole.ZeroFlagRole,
-        'n': FlagRole.NegativeSignFlagRole,
+        'n': FlagRole.SpecialFlagRole,
         'h': FlagRole.HalfCarryFlagRole,
         'c': FlagRole.CarryFlagRole,
         'i': FlagRole.SpecialFlagRole,
