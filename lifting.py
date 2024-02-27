@@ -32,6 +32,14 @@ def decode_call_unconditional_a16(data, addr, il: LowLevelILFunction):
     il.append(il.call(il.const_pointer(2, dest_address)))
     return 3
 
+def decode_rst(dest_address, data, addr, il: LowLevelILFunction):
+    il.append(il.call(il.const_pointer(2, dest_address)))
+    return 1
+
+def decode_jp_hl(data, addr, il: LowLevelILFunction):
+    il.append(il.jump(il.reg(2, 'HL')))
+    return 1
+
 def decode_jp_unconditional_a16(data, addr, il: LowLevelILFunction):
     dest_address = struct.unpack("<H", data[1:3])[0]
     label = il.get_label_for_address(il.arch, dest_address)
@@ -40,6 +48,46 @@ def decode_jp_unconditional_a16(data, addr, il: LowLevelILFunction):
     else:
         il.append(il.jump(il.const_pointer(2, dest_address)))
     return 3
+
+def decode_jp_conditional_a16(data, addr, il: LowLevelILFunction):
+    instruction_length = 3
+    next_instruction_addr = addr + instruction_length
+    dest_address = struct.unpack("<H", data[1:3])[0]
+    opcode = data[0]
+
+    if opcode == 0xc2:
+        cond = il.flag_condition(LowLevelILFlagCondition.LLFC_NE)
+    elif opcode == 0xca:
+        cond = il.flag_condition(LowLevelILFlagCondition.LLFC_E)
+    elif opcode == 0xd2:
+        cond = il.not_expr(0, il.flag('c'))
+    elif opcode == 0xda:
+        cond = il.flag('c')
+    else:
+        return None
+    # if there are no flags to process here then assume the code is wrong
+    if not cond:
+        print("addr %X, cond = 0, opcode = %X" % (addr, opcode))
+        return None
+
+    true_label = il.get_label_for_address(il.arch, dest_address)
+    false_label = il.get_label_for_address(il.arch, next_instruction_addr)
+
+    if true_label and false_label:
+        il.append(il.if_expr(cond, true_label, false_label))
+    else:
+        new_true_label = LowLevelILLabel()
+        new_false_label = LowLevelILLabel()
+        il.append(il.if_expr(cond, new_true_label, new_false_label))
+        il.mark_label(new_true_label)
+        if true_label:
+            goto_or_jmp = il.goto(true_label)
+        else:
+            goto_or_jmp = il.jump(il.const_pointer(2, dest_address))
+        il.append(goto_or_jmp)
+        il.mark_label(new_false_label)
+    
+    return instruction_length
 
 def decode_jr_unconditional_r8(data, addr, il: LowLevelILFunction):
     instruction_length = 2
@@ -164,6 +212,14 @@ def read_reg8_or_hl_pointer(reg, il: LowLevelILFunction):
     else:
         raise Exception("Invalid reg8: %s" % reg)
 
+def set_reg8_or_hl_pointer(reg, value, il: LowLevelILFunction):
+    if reg in ['B', 'C', 'D', 'E', 'H', 'L', 'A']:
+        return il.set_reg(1, reg, value)
+    elif reg == "(HL)":
+        return il.store(1, il.reg(2, 'HL'), value)
+    else:
+        raise Exception("Invalid reg8: %s" % reg)
+
 def load_reg16_pointer(reg, il: LowLevelILFunction):
     return il.load(1, il.reg(2, reg))
 
@@ -220,7 +276,7 @@ def decode_arithmetic_logical_8bit(reg, opcode, data, addr, il: LowLevelILFuncti
         return instruction_size
     
     if opcode == ArithmeticLogicalOpcode.INC or opcode == ArithmeticLogicalOpcode.DEC:
-        il.append(il.set_reg(1, reg, expression))
+        il.append(set_reg8_or_hl_pointer(reg, expression, il))
     elif opcode == ArithmeticLogicalOpcode.CMP:
         pass
     else:
@@ -290,6 +346,11 @@ def decode_set_a16_a(data, addr, il: LowLevelILFunction):
     il.append(il.store(1, il.const_pointer(2, dest_address), il.reg(1, 'A')))
     return 3
 
+def decode_set_a16_sp(data, addr, il: LowLevelILFunction):
+    dest_address = struct.unpack('<H', data[1:3])[0]
+    il.append(il.store(2, il.const_pointer(2, dest_address), il.reg(2, 'SP')))
+    return 3
+
 def decode_set_a8_a(data, addr, il: LowLevelILFunction):
     dest_address = 0xFF00 + struct.unpack('<B', data[1:2])[0]
     dest_pointer = il.const_pointer(2, dest_address)
@@ -297,7 +358,7 @@ def decode_set_a8_a(data, addr, il: LowLevelILFunction):
     return 2
 
 def decode_set_c_a(data, addr, il: LowLevelILFunction):
-    dest_pointer = il.add(2, il.const_pointer(2, 0xFF00), il.sign_extend(2, il.reg(1, 'C')))
+    dest_pointer = il.add(2, il.const_pointer(2, 0xFF00), il.zero_extend(2, il.reg(1, 'C')))
     il.append(il.store(1, dest_pointer, il.reg(1, 'A')))
     return 2
 
@@ -308,7 +369,7 @@ def decode_set_a_a8(data, addr, il: LowLevelILFunction):
     return 2
 
 def decode_set_a_c(data, addr, il: LowLevelILFunction):
-    src_pointer = il.add(2, il.const_pointer(2, 0xFF00), il.sign_extend(2, il.reg(1, 'C')))
+    src_pointer = il.add(2, il.const_pointer(2, 0xFF00), il.zero_extend(2, il.reg(1, 'C')))
     il.append(il.set_reg(1, 'A', il.load(1, src_pointer)))
     return 2
 
@@ -321,20 +382,57 @@ def decode_pop_reg16(reg, data, addr, il: LowLevelILFunction):
     return 1
 
 def decode_rla(data, addr, il: LowLevelILFunction):
-    il.append(il.rotate_left(1, il.reg(1, 'A'), il.const(1, 1)))
+    il.append(il.set_reg(1, 'A', il.rotate_left(1, il.reg(1, 'A'), il.const(1, 1), 'nhc')))
+    il.append(il.set_flag('z', il.const(1, 0)))
     return 1
 
 def decode_rra(data, addr, il: LowLevelILFunction):
-    il.append(il.rotate_right(1, il.reg(1, 'A'), il.const(1, 1)))
+    il.append(il.set_reg(1, 'A', il.rotate_right(1, il.reg(1, 'A'), il.const(1, 1), 'nhc')))
+    il.append(il.set_flag('z', il.const(1, 0)))
     return 1
 
 def decode_rlca(data, addr, il: LowLevelILFunction):
-    il.append(il.rotate_left_carry(1, il.reg(1, 'A'), il.const(1, 1), il.flag('c')))
+    il.append(il.set_reg(1, 'A', il.rotate_left_carry(1, il.reg(1, 'A'), il.const(1, 1), il.flag('c'), 'nhc')))
+    il.append(il.set_flag('z', il.const(1, 0)))
     return 1
 
 def decode_rrca(data, addr, il: LowLevelILFunction):
-    il.append(il.rotate_right_carry(1, il.reg(1, 'A'), il.const(1, 1), il.flag('c')))
+    il.append(il.set_reg(1, 'A', il.rotate_right_carry(1, il.reg(1, 'A'), il.const(1, 1), il.flag('c'), 'nhc')))
+    il.append(il.set_flag('z', il.const(1, 0)))
     return 1
+
+def decode_rl_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_left(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
+    return 2
+
+def decode_rr_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_right(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
+    return 2
+
+def decode_rlc_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_left_carry(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), il.flag('c'), '*'), il))
+    return 2
+
+def decode_rrc_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_right_carry(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), il.flag('c'), '*'), il))
+    return 2
+
+def decode_sla_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.shift_left(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
+    return 2
+
+def decode_sra_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.arith_shift_right(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
+    return 2
+
+def decode_srl_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.logical_shift_right(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
+    return 2
+
+def decode_swap_reg8(reg, data, addr, il: LowLevelILFunction):
+    # swapping nybbles so that's the same as a rotate 4
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_right(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 4), '*'), il))
+    return 2
 
 def decode_test_bit(arg, reg, data, addr, il: LowLevelILFunction):
     il.append(il.set_flag('z', il.test_bit(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1<<arg))))
@@ -342,71 +440,107 @@ def decode_test_bit(arg, reg, data, addr, il: LowLevelILFunction):
     il.append(il.set_flag('h', il.const(1, 1)))
     return 2
 
+def decode_set_bit(arg, reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer(reg, il.or_expr(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1<<arg)), il))
+    return 2
+
+def decode_reset_bit(arg, reg, data, addr, il: LowLevelILFunction):
+    # make mask with XOR and then AND to clear bit
+    il.append(set_reg8_or_hl_pointer(reg, il.and_expr(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 0xFF ^ (1<<arg))), il))
+    return 2
+
+def decode_cpl(data, addr, il: LowLevelILFunction):
+    il.append(il.set_reg(1, 'A', il.xor_expr(1, il.reg(1, 'A'), il.const(1, 0xFF))))
+    il.append(il.set_flag('n', il.const(1, 1)))
+    il.append(il.set_flag('h', il.const(1, 1)))
+    return 1
+
+def decode_scf(data, addr, il: LowLevelILFunction):
+    il.append(il.set_flag('c', il.const(1, 1)))
+    il.append(il.set_flag('n', il.const(1, 0)))
+    il.append(il.set_flag('h', il.const(1, 0)))
+    return 1
+
+def decode_ccf(data, addr, il: LowLevelILFunction):
+    il.append(il.set_flag('c', il.xor_expr(1, il.flag('c'), il.const(1, 1))))
+    il.append(il.set_flag('n', il.const(1, 0)))
+    il.append(il.set_flag('h', il.const(1, 0)))
+    return 1
+
+def decode_add_sp_r8(data, addr, il: LowLevelILFunction):
+    arg = struct.unpack('<B', data[1:2])[0]
+    dest_reg = il.reg(2, 'SP')
+    expression = il.add(2, dest_reg, il.sign_extend(2, il.const(1, arg)), 'nhc')
+    il.append(il.set_reg(2, 'SP', expression))
+    il.append(il.set_flag('z', il.const(1, 0)))
+    return 2
+    
+
 handlers_by_opcode_cbprefixed = {
-    0x0: partial(decode_unimplemented, 2),
-    0x1: partial(decode_unimplemented, 2),
-    0x2: partial(decode_unimplemented, 2),
-    0x3: partial(decode_unimplemented, 2),
-    0x4: partial(decode_unimplemented, 2),
-    0x5: partial(decode_unimplemented, 2),
-    0x6: partial(decode_unimplemented, 2),
-    0x7: partial(decode_unimplemented, 2),
-    0x8: partial(decode_unimplemented, 2),
-    0x9: partial(decode_unimplemented, 2),
-    0xa: partial(decode_unimplemented, 2),
-    0xb: partial(decode_unimplemented, 2),
-    0xc: partial(decode_unimplemented, 2),
-    0xd: partial(decode_unimplemented, 2),
-    0xe: partial(decode_unimplemented, 2),
-    0xf: partial(decode_unimplemented, 2),
-    0x10: partial(decode_unimplemented, 2),
-    0x11: partial(decode_unimplemented, 2),
-    0x12: partial(decode_unimplemented, 2),
-    0x13: partial(decode_unimplemented, 2),
-    0x14: partial(decode_unimplemented, 2),
-    0x15: partial(decode_unimplemented, 2),
-    0x16: partial(decode_unimplemented, 2),
-    0x17: partial(decode_unimplemented, 2),
-    0x18: partial(decode_unimplemented, 2),
-    0x19: partial(decode_unimplemented, 2),
-    0x1a: partial(decode_unimplemented, 2),
-    0x1b: partial(decode_unimplemented, 2),
-    0x1c: partial(decode_unimplemented, 2),
-    0x1d: partial(decode_unimplemented, 2),
-    0x1e: partial(decode_unimplemented, 2),
-    0x1f: partial(decode_unimplemented, 2),
-    0x20: partial(decode_unimplemented, 2),
-    0x21: partial(decode_unimplemented, 2),
-    0x22: partial(decode_unimplemented, 2),
-    0x23: partial(decode_unimplemented, 2),
-    0x24: partial(decode_unimplemented, 2),
-    0x25: partial(decode_unimplemented, 2),
-    0x26: partial(decode_unimplemented, 2),
-    0x27: partial(decode_unimplemented, 2),
-    0x28: partial(decode_unimplemented, 2),
-    0x29: partial(decode_unimplemented, 2),
-    0x2a: partial(decode_unimplemented, 2),
-    0x2b: partial(decode_unimplemented, 2),
-    0x2c: partial(decode_unimplemented, 2),
-    0x2d: partial(decode_unimplemented, 2),
-    0x2e: partial(decode_unimplemented, 2),
-    0x2f: partial(decode_unimplemented, 2),
-    0x30: partial(decode_unimplemented, 2),
-    0x31: partial(decode_unimplemented, 2),
-    0x32: partial(decode_unimplemented, 2),
-    0x33: partial(decode_unimplemented, 2),
-    0x34: partial(decode_unimplemented, 2),
-    0x35: partial(decode_unimplemented, 2),
-    0x36: partial(decode_unimplemented, 2),
-    0x37: partial(decode_unimplemented, 2),
-    0x38: partial(decode_unimplemented, 2),
-    0x39: partial(decode_unimplemented, 2),
-    0x3a: partial(decode_unimplemented, 2),
-    0x3b: partial(decode_unimplemented, 2),
-    0x3c: partial(decode_unimplemented, 2),
-    0x3d: partial(decode_unimplemented, 2),
-    0x3e: partial(decode_unimplemented, 2),
-    0x3f: partial(decode_unimplemented, 2),
+    0x0: partial(decode_rlc_reg8, 'B'),
+    0x1: partial(decode_rlc_reg8, 'C'),
+    0x2: partial(decode_rlc_reg8, 'D'),
+    0x3: partial(decode_rlc_reg8, 'E'),
+    0x4: partial(decode_rlc_reg8, 'H'),
+    0x5: partial(decode_rlc_reg8, 'L'),
+    0x6: partial(decode_rlc_reg8, '(HL)'),
+    0x7: partial(decode_rlc_reg8, 'A'),
+    0x8: partial(decode_rrc_reg8, 'B'),
+    0x9: partial(decode_rrc_reg8, 'C'),
+    0xa: partial(decode_rrc_reg8, 'D'),
+    0xb: partial(decode_rrc_reg8, 'E'),
+    0xc: partial(decode_rrc_reg8, 'H'),
+    0xd: partial(decode_rrc_reg8, 'L'),
+    0xe: partial(decode_rrc_reg8, '(HL)'),
+    0xf: partial(decode_rrc_reg8, 'A'),
+    0x10: partial(decode_rl_reg8, 'B'),
+    0x11: partial(decode_rl_reg8, 'C'),
+    0x12: partial(decode_rl_reg8, 'D'),
+    0x13: partial(decode_rl_reg8, 'E'),
+    0x14: partial(decode_rl_reg8, 'H'),
+    0x15: partial(decode_rl_reg8, 'L'),
+    0x16: partial(decode_rl_reg8, '(HL)'),
+    0x17: partial(decode_rl_reg8, 'A'),
+    0x18: partial(decode_rr_reg8, 'B'),
+    0x19: partial(decode_rr_reg8, 'C'),
+    0x1a: partial(decode_rr_reg8, 'D'),
+    0x1b: partial(decode_rr_reg8, 'E'),
+    0x1c: partial(decode_rr_reg8, 'H'),
+    0x1d: partial(decode_rr_reg8, 'L'),
+    0x1e: partial(decode_rr_reg8, '(HL)'),
+    0x1f: partial(decode_rr_reg8, 'A'),
+    0x20: partial(decode_sla_reg8, 'B'),
+    0x21: partial(decode_sla_reg8, 'C'),
+    0x22: partial(decode_sla_reg8, 'D'),
+    0x23: partial(decode_sla_reg8, 'E'),
+    0x24: partial(decode_sla_reg8, 'H'),
+    0x25: partial(decode_sla_reg8, 'L'),
+    0x26: partial(decode_sla_reg8, '(HL)'),
+    0x27: partial(decode_sla_reg8, 'A'),
+    0x28: partial(decode_sra_reg8, 'B'),
+    0x29: partial(decode_sra_reg8, 'C'),
+    0x2a: partial(decode_sra_reg8, 'D'),
+    0x2b: partial(decode_sra_reg8, 'E'),
+    0x2c: partial(decode_sra_reg8, 'H'),
+    0x2d: partial(decode_sra_reg8, 'L'),
+    0x2e: partial(decode_sra_reg8, '(HL)'),
+    0x2f: partial(decode_sra_reg8, 'A'),
+    0x30: partial(decode_swap_reg8, 'B'),
+    0x31: partial(decode_swap_reg8, 'C'),
+    0x32: partial(decode_swap_reg8, 'D'),
+    0x33: partial(decode_swap_reg8, 'E'),
+    0x34: partial(decode_swap_reg8, 'H'),
+    0x35: partial(decode_swap_reg8, 'L'),
+    0x36: partial(decode_swap_reg8, '(HL)'),
+    0x37: partial(decode_swap_reg8, 'A'),
+    0x38: partial(decode_srl_reg8, 'B'),
+    0x39: partial(decode_srl_reg8, 'C'),
+    0x3a: partial(decode_srl_reg8, 'D'),
+    0x3b: partial(decode_srl_reg8, 'E'),
+    0x3c: partial(decode_srl_reg8, 'H'),
+    0x3d: partial(decode_srl_reg8, 'L'),
+    0x3e: partial(decode_srl_reg8, '(HL)'),
+    0x3f: partial(decode_srl_reg8, 'A'),
     0x40: partial(decode_test_bit, 0, 'B'),
     0x41: partial(decode_test_bit, 0, 'C'),
     0x42: partial(decode_test_bit, 0, 'D'),
@@ -471,134 +605,134 @@ handlers_by_opcode_cbprefixed = {
     0x7d: partial(decode_test_bit, 7, 'L'),
     0x7e: partial(decode_test_bit, 7, '(HL)'),
     0x7f: partial(decode_test_bit, 7, 'A'),
-    0x80: partial(decode_unimplemented, 2),
-    0x81: partial(decode_unimplemented, 2),
-    0x82: partial(decode_unimplemented, 2),
-    0x83: partial(decode_unimplemented, 2),
-    0x84: partial(decode_unimplemented, 2),
-    0x85: partial(decode_unimplemented, 2),
-    0x86: partial(decode_unimplemented, 2),
-    0x87: partial(decode_unimplemented, 2),
-    0x88: partial(decode_unimplemented, 2),
-    0x89: partial(decode_unimplemented, 2),
-    0x8a: partial(decode_unimplemented, 2),
-    0x8b: partial(decode_unimplemented, 2),
-    0x8c: partial(decode_unimplemented, 2),
-    0x8d: partial(decode_unimplemented, 2),
-    0x8e: partial(decode_unimplemented, 2),
-    0x8f: partial(decode_unimplemented, 2),
-    0x90: partial(decode_unimplemented, 2),
-    0x91: partial(decode_unimplemented, 2),
-    0x92: partial(decode_unimplemented, 2),
-    0x93: partial(decode_unimplemented, 2),
-    0x94: partial(decode_unimplemented, 2),
-    0x95: partial(decode_unimplemented, 2),
-    0x96: partial(decode_unimplemented, 2),
-    0x97: partial(decode_unimplemented, 2),
-    0x98: partial(decode_unimplemented, 2),
-    0x99: partial(decode_unimplemented, 2),
-    0x9a: partial(decode_unimplemented, 2),
-    0x9b: partial(decode_unimplemented, 2),
-    0x9c: partial(decode_unimplemented, 2),
-    0x9d: partial(decode_unimplemented, 2),
-    0x9e: partial(decode_unimplemented, 2),
-    0x9f: partial(decode_unimplemented, 2),
-    0xa0: partial(decode_unimplemented, 2),
-    0xa1: partial(decode_unimplemented, 2),
-    0xa2: partial(decode_unimplemented, 2),
-    0xa3: partial(decode_unimplemented, 2),
-    0xa4: partial(decode_unimplemented, 2),
-    0xa5: partial(decode_unimplemented, 2),
-    0xa6: partial(decode_unimplemented, 2),
-    0xa7: partial(decode_unimplemented, 2),
-    0xa8: partial(decode_unimplemented, 2),
-    0xa9: partial(decode_unimplemented, 2),
-    0xaa: partial(decode_unimplemented, 2),
-    0xab: partial(decode_unimplemented, 2),
-    0xac: partial(decode_unimplemented, 2),
-    0xad: partial(decode_unimplemented, 2),
-    0xae: partial(decode_unimplemented, 2),
-    0xaf: partial(decode_unimplemented, 2),
-    0xb0: partial(decode_unimplemented, 2),
-    0xb1: partial(decode_unimplemented, 2),
-    0xb2: partial(decode_unimplemented, 2),
-    0xb3: partial(decode_unimplemented, 2),
-    0xb4: partial(decode_unimplemented, 2),
-    0xb5: partial(decode_unimplemented, 2),
-    0xb6: partial(decode_unimplemented, 2),
-    0xb7: partial(decode_unimplemented, 2),
-    0xb8: partial(decode_unimplemented, 2),
-    0xb9: partial(decode_unimplemented, 2),
-    0xba: partial(decode_unimplemented, 2),
-    0xbb: partial(decode_unimplemented, 2),
-    0xbc: partial(decode_unimplemented, 2),
-    0xbd: partial(decode_unimplemented, 2),
-    0xbe: partial(decode_unimplemented, 2),
-    0xbf: partial(decode_unimplemented, 2),
-    0xc0: partial(decode_unimplemented, 2),
-    0xc1: partial(decode_unimplemented, 2),
-    0xc2: partial(decode_unimplemented, 2),
-    0xc3: partial(decode_unimplemented, 2),
-    0xc4: partial(decode_unimplemented, 2),
-    0xc5: partial(decode_unimplemented, 2),
-    0xc6: partial(decode_unimplemented, 2),
-    0xc7: partial(decode_unimplemented, 2),
-    0xc8: partial(decode_unimplemented, 2),
-    0xc9: partial(decode_unimplemented, 2),
-    0xca: partial(decode_unimplemented, 2),
-    0xcb: partial(decode_unimplemented, 2),
-    0xcc: partial(decode_unimplemented, 2),
-    0xcd: partial(decode_unimplemented, 2),
-    0xce: partial(decode_unimplemented, 2),
-    0xcf: partial(decode_unimplemented, 2),
-    0xd0: partial(decode_unimplemented, 2),
-    0xd1: partial(decode_unimplemented, 2),
-    0xd2: partial(decode_unimplemented, 2),
-    0xd3: partial(decode_unimplemented, 2),
-    0xd4: partial(decode_unimplemented, 2),
-    0xd5: partial(decode_unimplemented, 2),
-    0xd6: partial(decode_unimplemented, 2),
-    0xd7: partial(decode_unimplemented, 2),
-    0xd8: partial(decode_unimplemented, 2),
-    0xd9: partial(decode_unimplemented, 2),
-    0xda: partial(decode_unimplemented, 2),
-    0xdb: partial(decode_unimplemented, 2),
-    0xdc: partial(decode_unimplemented, 2),
-    0xdd: partial(decode_unimplemented, 2),
-    0xde: partial(decode_unimplemented, 2),
-    0xdf: partial(decode_unimplemented, 2),
-    0xe0: partial(decode_unimplemented, 2),
-    0xe1: partial(decode_unimplemented, 2),
-    0xe2: partial(decode_unimplemented, 2),
-    0xe3: partial(decode_unimplemented, 2),
-    0xe4: partial(decode_unimplemented, 2),
-    0xe5: partial(decode_unimplemented, 2),
-    0xe6: partial(decode_unimplemented, 2),
-    0xe7: partial(decode_unimplemented, 2),
-    0xe8: partial(decode_unimplemented, 2),
-    0xe9: partial(decode_unimplemented, 2),
-    0xea: partial(decode_unimplemented, 2),
-    0xeb: partial(decode_unimplemented, 2),
-    0xec: partial(decode_unimplemented, 2),
-    0xed: partial(decode_unimplemented, 2),
-    0xee: partial(decode_unimplemented, 2),
-    0xef: partial(decode_unimplemented, 2),
-    0xf0: partial(decode_unimplemented, 2),
-    0xf1: partial(decode_unimplemented, 2),
-    0xf2: partial(decode_unimplemented, 2),
-    0xf3: partial(decode_unimplemented, 2),
-    0xf4: partial(decode_unimplemented, 2),
-    0xf5: partial(decode_unimplemented, 2),
-    0xf6: partial(decode_unimplemented, 2),
-    0xf7: partial(decode_unimplemented, 2),
-    0xf8: partial(decode_unimplemented, 2),
-    0xf9: partial(decode_unimplemented, 2),
-    0xfa: partial(decode_unimplemented, 2),
-    0xfb: partial(decode_unimplemented, 2),
-    0xfc: partial(decode_unimplemented, 2),
-    0xfd: partial(decode_unimplemented, 2),
-    0xfe: partial(decode_unimplemented, 2),
-    0xff: partial(decode_unimplemented, 2),
+    0x80: partial(decode_reset_bit, 0, 'B'),
+    0x81: partial(decode_reset_bit, 0, 'C'),
+    0x82: partial(decode_reset_bit, 0, 'D'),
+    0x83: partial(decode_reset_bit, 0, 'E'),
+    0x84: partial(decode_reset_bit, 0, 'H'),
+    0x85: partial(decode_reset_bit, 0, 'L'),
+    0x86: partial(decode_reset_bit, 0, '(HL)'),
+    0x87: partial(decode_reset_bit, 0, 'A'),
+    0x88: partial(decode_reset_bit, 1, 'B'),
+    0x89: partial(decode_reset_bit, 1, 'C'),
+    0x8a: partial(decode_reset_bit, 1, 'D'),
+    0x8b: partial(decode_reset_bit, 1, 'E'),
+    0x8c: partial(decode_reset_bit, 1, 'H'),
+    0x8d: partial(decode_reset_bit, 1, 'L'),
+    0x8e: partial(decode_reset_bit, 1, '(HL)'),
+    0x8f: partial(decode_reset_bit, 1, 'A'),
+    0x90: partial(decode_reset_bit, 2, 'B'),
+    0x91: partial(decode_reset_bit, 2, 'C'),
+    0x92: partial(decode_reset_bit, 2, 'D'),
+    0x93: partial(decode_reset_bit, 2, 'E'),
+    0x94: partial(decode_reset_bit, 2, 'H'),
+    0x95: partial(decode_reset_bit, 2, 'L'),
+    0x96: partial(decode_reset_bit, 2, '(HL)'),
+    0x97: partial(decode_reset_bit, 2, 'A'),
+    0x98: partial(decode_reset_bit, 3, 'B'),
+    0x99: partial(decode_reset_bit, 3, 'C'),
+    0x9a: partial(decode_reset_bit, 3, 'D'),
+    0x9b: partial(decode_reset_bit, 3, 'E'),
+    0x9c: partial(decode_reset_bit, 3, 'H'),
+    0x9d: partial(decode_reset_bit, 3, 'L'),
+    0x9e: partial(decode_reset_bit, 3, '(HL)'),
+    0x9f: partial(decode_reset_bit, 3, 'A'),
+    0xa0: partial(decode_reset_bit, 4, 'B'),
+    0xa1: partial(decode_reset_bit, 4, 'C'),
+    0xa2: partial(decode_reset_bit, 4, 'D'),
+    0xa3: partial(decode_reset_bit, 4, 'E'),
+    0xa4: partial(decode_reset_bit, 4, 'H'),
+    0xa5: partial(decode_reset_bit, 4, 'L'),
+    0xa6: partial(decode_reset_bit, 4, '(HL)'),
+    0xa7: partial(decode_reset_bit, 4, 'A'),
+    0xa8: partial(decode_reset_bit, 5, 'B'),
+    0xa9: partial(decode_reset_bit, 5, 'C'),
+    0xaa: partial(decode_reset_bit, 5, 'D'),
+    0xab: partial(decode_reset_bit, 5, 'E'),
+    0xac: partial(decode_reset_bit, 5, 'H'),
+    0xad: partial(decode_reset_bit, 5, 'L'),
+    0xae: partial(decode_reset_bit, 5, '(HL)'),
+    0xaf: partial(decode_reset_bit, 5, 'A'),
+    0xb0: partial(decode_reset_bit, 6, 'B'),
+    0xb1: partial(decode_reset_bit, 6, 'C'),
+    0xb2: partial(decode_reset_bit, 6, 'D'),
+    0xb3: partial(decode_reset_bit, 6, 'E'),
+    0xb4: partial(decode_reset_bit, 6, 'H'),
+    0xb5: partial(decode_reset_bit, 6, 'L'),
+    0xb6: partial(decode_reset_bit, 6, '(HL)'),
+    0xb7: partial(decode_reset_bit, 6, 'A'),
+    0xb8: partial(decode_reset_bit, 7, 'B'),
+    0xb9: partial(decode_reset_bit, 7, 'C'),
+    0xba: partial(decode_reset_bit, 7, 'D'),
+    0xbb: partial(decode_reset_bit, 7, 'E'),
+    0xbc: partial(decode_reset_bit, 7, 'H'),
+    0xbd: partial(decode_reset_bit, 7, 'L'),
+    0xbe: partial(decode_reset_bit, 7, '(HL)'),
+    0xbf: partial(decode_reset_bit, 7, 'A'),
+    0xc0: partial(decode_set_bit, 0, 'B'),
+    0xc1: partial(decode_set_bit, 0, 'C'),
+    0xc2: partial(decode_set_bit, 0, 'D'),
+    0xc3: partial(decode_set_bit, 0, 'E'),
+    0xc4: partial(decode_set_bit, 0, 'H'),
+    0xc5: partial(decode_set_bit, 0, 'L'),
+    0xc6: partial(decode_set_bit, 0, '(HL)'),
+    0xc7: partial(decode_set_bit, 0, 'A'),
+    0xc8: partial(decode_set_bit, 1, 'B'),
+    0xc9: partial(decode_set_bit, 1, 'C'),
+    0xca: partial(decode_set_bit, 1, 'D'),
+    0xcb: partial(decode_set_bit, 1, 'E'),
+    0xcc: partial(decode_set_bit, 1, 'H'),
+    0xcd: partial(decode_set_bit, 1, 'L'),
+    0xce: partial(decode_set_bit, 1, '(HL)'),
+    0xcf: partial(decode_set_bit, 1, 'A'),
+    0xd0: partial(decode_set_bit, 2, 'B'),
+    0xd1: partial(decode_set_bit, 2, 'C'),
+    0xd2: partial(decode_set_bit, 2, 'D'),
+    0xd3: partial(decode_set_bit, 2, 'E'),
+    0xd4: partial(decode_set_bit, 2, 'H'),
+    0xd5: partial(decode_set_bit, 2, 'L'),
+    0xd6: partial(decode_set_bit, 2, '(HL)'),
+    0xd7: partial(decode_set_bit, 2, 'A'),
+    0xd8: partial(decode_set_bit, 3, 'B'),
+    0xd9: partial(decode_set_bit, 3, 'C'),
+    0xda: partial(decode_set_bit, 3, 'D'),
+    0xdb: partial(decode_set_bit, 3, 'E'),
+    0xdc: partial(decode_set_bit, 3, 'H'),
+    0xdd: partial(decode_set_bit, 3, 'L'),
+    0xde: partial(decode_set_bit, 3, '(HL)'),
+    0xdf: partial(decode_set_bit, 3, 'A'),
+    0xe0: partial(decode_set_bit, 4, 'B'),
+    0xe1: partial(decode_set_bit, 4, 'C'),
+    0xe2: partial(decode_set_bit, 4, 'D'),
+    0xe3: partial(decode_set_bit, 4, 'E'),
+    0xe4: partial(decode_set_bit, 4, 'H'),
+    0xe5: partial(decode_set_bit, 4, 'L'),
+    0xe6: partial(decode_set_bit, 4, '(HL)'),
+    0xe7: partial(decode_set_bit, 4, 'A'),
+    0xe8: partial(decode_set_bit, 5, 'B'),
+    0xe9: partial(decode_set_bit, 5, 'C'),
+    0xea: partial(decode_set_bit, 5, 'D'),
+    0xeb: partial(decode_set_bit, 5, 'E'),
+    0xec: partial(decode_set_bit, 5, 'H'),
+    0xed: partial(decode_set_bit, 5, 'L'),
+    0xee: partial(decode_set_bit, 5, '(HL)'),
+    0xef: partial(decode_set_bit, 5, 'A'),
+    0xf0: partial(decode_set_bit, 6, 'B'),
+    0xf1: partial(decode_set_bit, 6, 'C'),
+    0xf2: partial(decode_set_bit, 6, 'D'),
+    0xf3: partial(decode_set_bit, 6, 'E'),
+    0xf4: partial(decode_set_bit, 6, 'H'),
+    0xf5: partial(decode_set_bit, 6, 'L'),
+    0xf6: partial(decode_set_bit, 6, '(HL)'),
+    0xf7: partial(decode_set_bit, 6, 'A'),
+    0xf8: partial(decode_set_bit, 7, 'B'),
+    0xf9: partial(decode_set_bit, 7, 'C'),
+    0xfa: partial(decode_set_bit, 7, 'D'),
+    0xfb: partial(decode_set_bit, 7, 'E'),
+    0xfc: partial(decode_set_bit, 7, 'H'),
+    0xfd: partial(decode_set_bit, 7, 'L'),
+    0xfe: partial(decode_set_bit, 7, '(HL)'),
+    0xff: partial(decode_set_bit, 7, 'A'),
 }
 
 def decode_cbprefixed(data, addr, il: LowLevelILFunction):
@@ -617,7 +751,7 @@ handlers_by_opcode = {
     0x5: partial(decode_arithmetic_logical_8bit, 'B', ArithmeticLogicalOpcode.DEC),
     0x6: partial(decode_set_reg_d8, 'B'),
     0x7: decode_rlca,
-    0x8: partial(decode_unimplemented, 3),
+    0x8: decode_set_a16_sp,
     0x9: partial(decode_arithmetic_logical_reg16, 'HL', 'BC', ArithmeticLogicalOpcode.ADD),
     0xa: partial(decode_set_reg8_reg16_pointer, 'A', 'BC'),
     0xb: partial(decode_arithmetic_logical_reg16, 'BC', 'BC', ArithmeticLogicalOpcode.DEC),
@@ -625,7 +759,7 @@ handlers_by_opcode = {
     0xd: partial(decode_arithmetic_logical_8bit, 'C', ArithmeticLogicalOpcode.DEC),
     0xe: partial(decode_set_reg_d8, 'C'),
     0xf: decode_rrca,
-    0x10: partial(decode_unimplemented, 2),
+    0x10: partial(decode_unimplemented, 2), # STOP
     0x11: partial(decode_set_reg_d16, 'DE'),
     0x12: partial(decode_set_reg16_pointer_reg8, 'DE', 'A'),
     0x13: partial(decode_arithmetic_logical_reg16, 'DE', 'DE', ArithmeticLogicalOpcode.INC),
@@ -648,7 +782,7 @@ handlers_by_opcode = {
     0x24: partial(decode_arithmetic_logical_8bit, 'H', ArithmeticLogicalOpcode.INC),
     0x25: partial(decode_arithmetic_logical_8bit, 'H', ArithmeticLogicalOpcode.DEC),
     0x26: partial(decode_set_reg_d8, 'H'),
-    0x27: partial(decode_unimplemented, 1),
+    0x27: partial(decode_unimplemented, 1), # DAA, this isn't done in Z80 either...
     0x28: decode_jr_conditional_r8,
     0x29: partial(decode_arithmetic_logical_reg16, 'HL', 'HL', ArithmeticLogicalOpcode.ADD),
     0x2a: partial(decode_set_reg8_reg16_pointer, 'A', 'HL+'),
@@ -656,15 +790,15 @@ handlers_by_opcode = {
     0x2c: partial(decode_arithmetic_logical_8bit, 'L', ArithmeticLogicalOpcode.INC),
     0x2d: partial(decode_arithmetic_logical_8bit, 'L', ArithmeticLogicalOpcode.DEC),
     0x2e: partial(decode_set_reg_d8, 'L'),
-    0x2f: partial(decode_unimplemented, 1),
+    0x2f: decode_cpl,
     0x30: decode_jr_conditional_r8,
     0x31: partial(decode_set_reg_d16, 'SP'),
     0x32: partial(decode_set_reg16_pointer_reg8, 'HL+', 'A'),
     0x33: partial(decode_arithmetic_logical_reg16, 'SP', 'SP', ArithmeticLogicalOpcode.INC),
-    0x34: partial(decode_unimplemented, 1),
-    0x35: partial(decode_unimplemented, 1),
+    0x34: partial(decode_arithmetic_logical_8bit, '(HL)', ArithmeticLogicalOpcode.INC),
+    0x35: partial(decode_arithmetic_logical_8bit, '(HL)', ArithmeticLogicalOpcode.DEC),
     0x36: decode_set_hl_pointer_d8,
-    0x37: partial(decode_unimplemented, 1),
+    0x37: decode_scf,
     0x38: decode_jr_conditional_r8,
     0x39: partial(decode_arithmetic_logical_reg16, 'HL', 'SP', ArithmeticLogicalOpcode.ADD),
     0x3a: partial(decode_set_reg8_reg16_pointer, 'A', 'HL-'),
@@ -672,7 +806,7 @@ handlers_by_opcode = {
     0x3c: partial(decode_arithmetic_logical_8bit, 'A', ArithmeticLogicalOpcode.INC),
     0x3d: partial(decode_arithmetic_logical_8bit, 'A', ArithmeticLogicalOpcode.DEC),
     0x3e: partial(decode_set_reg_d8, 'A'),
-    0x3f: partial(decode_unimplemented, 1),
+    0x3f: decode_ccf,
     0x40: partial(decode_set_reg_reg8, 'B', 'B'),
     0x41: partial(decode_set_reg_reg8, 'B', 'C'),
     0x42: partial(decode_set_reg_reg8, 'B', 'D'),
@@ -727,7 +861,7 @@ handlers_by_opcode = {
     0x73: partial(decode_set_reg16_pointer_reg8, 'HL', 'E'),
     0x74: partial(decode_set_reg16_pointer_reg8, 'HL', 'H'),
     0x75: partial(decode_set_reg16_pointer_reg8, 'HL', 'L'),
-    0x76: partial(decode_unimplemented, 1),
+    0x76: partial(decode_unimplemented, 1), # HALT
     0x77: partial(decode_set_reg16_pointer_reg8, 'HL', 'A'),
     0x78: partial(decode_set_reg_reg8, 'A', 'B'),
     0x79: partial(decode_set_reg_reg8, 'A', 'C'),
@@ -803,57 +937,57 @@ handlers_by_opcode = {
     0xbf: partial(decode_arithmetic_logical_8bit, 'A', ArithmeticLogicalOpcode.CMP),
     0xc0: decode_ret_conditional,
     0xc1: partial(decode_pop_reg16, 'BC'),
-    0xc2: partial(decode_unimplemented, 3),
+    0xc2: decode_jp_conditional_a16,
     0xc3: decode_jp_unconditional_a16,
     0xc4: decode_call_conditional_a16,
     0xc5: partial(decode_push_reg16, 'BC'),
     0xc6: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.ADD),
-    0xc7: partial(decode_unimplemented, 1),
+    0xc7: partial(decode_rst, 0x00),
     0xc8: decode_ret_conditional,
     0xc9: decode_ret_unconditional,
-    0xca: partial(decode_unimplemented, 3),
+    0xca: decode_jp_conditional_a16,
     0xcb: decode_cbprefixed,
     0xcc: decode_call_conditional_a16,
     0xcd: decode_call_unconditional_a16,
     0xce: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.ADC),
-    0xcf: partial(decode_unimplemented, 1),
+    0xcf: partial(decode_rst, 0x08),
     0xd0: decode_ret_conditional,
     0xd1: partial(decode_pop_reg16, 'DE'),
-    0xd2: partial(decode_unimplemented, 3),
+    0xd2: decode_jp_conditional_a16,
     0xd4: decode_call_conditional_a16,
     0xd5: partial(decode_push_reg16, 'DE'),
     0xd6: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.SUB),
-    0xd7: partial(decode_unimplemented, 1),
+    0xd7: partial(decode_rst, 0x10),
     0xd8: decode_ret_conditional,
     0xd9: decode_ret_unconditional,
-    0xda: partial(decode_unimplemented, 3),
+    0xda: decode_jp_conditional_a16,
     0xdc: decode_call_conditional_a16,
     0xde: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.SBC),
-    0xdf: partial(decode_unimplemented, 1),
+    0xdf: partial(decode_rst, 0x18),
     0xe0: decode_set_a8_a,
     0xe1: partial(decode_pop_reg16, 'HL'),
     0xe2: decode_set_c_a,
     0xe5: partial(decode_push_reg16, 'HL'),
     0xe6: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.AND),
-    0xe7: partial(decode_unimplemented, 1),
-    0xe8: partial(decode_unimplemented, 2),
-    0xe9: partial(decode_unimplemented, 1),
+    0xe7: partial(decode_rst, 0x20),
+    0xe8: decode_add_sp_r8,
+    0xe9: decode_jp_hl,
     0xea: decode_set_a16_a,
     0xee: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.XOR),
-    0xef: partial(decode_unimplemented, 1),
+    0xef: partial(decode_rst, 0x2f),
     0xf0: decode_set_a_a8,
     0xf1: partial(decode_pop_reg16, 'AF'),
     0xf2: decode_set_a_c,
-    0xf3: partial(decode_unimplemented, 1),
+    0xf3: partial(decode_unimplemented, 1), # DI
     0xf5: partial(decode_push_reg16, 'AF'),
     0xf6: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.OR),
-    0xf7: partial(decode_unimplemented, 1),
+    0xf7: partial(decode_rst, 0x30),
     0xf8: decode_set_hl_sp_plus_d8,
     0xf9: decode_set_sp_hl,
     0xfa: decode_set_a_a16,
-    0xfb: partial(decode_unimplemented, 1),
+    0xfb: partial(decode_unimplemented, 1), # EI
     0xfe: decode_cp_d8,
-    0xff: partial(decode_unimplemented, 1),
+    0xff: partial(decode_rst, 0x3f),
 }
 
 def lift_il(data, addr, il):
