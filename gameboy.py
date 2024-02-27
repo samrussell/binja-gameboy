@@ -8,7 +8,7 @@ from binaryninja.enums import InstructionTextTokenType, FlagRole, BranchType, Lo
 from binaryninja.function import RegisterInfo, InstructionInfo, InstructionTextToken
 from binaryninja.log import log_info
 from binaryninja.lowlevelil import LowLevelILFunction, LowLevelILLabel
-from .lifting import lift_il
+from .lifting import lift_il, lift_flag_il
 
 
 class LR35902(Architecture):
@@ -40,7 +40,7 @@ class LR35902(Architecture):
     }
 
     flags = ["z", "n", "h", "c", "i"]
-    flag_write_types = ["*", "czn", "zn"]
+    flag_write_types = ["*", "znh", "nhc", "nh"]
     flag_roles = {
         'z': FlagRole.ZeroFlagRole,
         'n': FlagRole.NegativeSignFlagRole,
@@ -49,9 +49,10 @@ class LR35902(Architecture):
         'i': FlagRole.SpecialFlagRole,
     }
     flags_written_by_flag_write_type = {
-        "*": ["c", "z", "h", "n"],
-        "czn": ["c", "z", "n"],
-        "zn": ["z", "n"],
+        "*": ["z", "n", "h", "c"],
+        "znh": ["z", "n", "h"],
+        "nhc": ["n", "h", "c"],
+        "nh": ["n", "h"],
     }
     flags_required_for_flag_condition = {
         LowLevelILFlagCondition.LLFC_E:   ['z'],
@@ -154,8 +155,11 @@ class LR35902(Architecture):
     def _get_io_register(self, addr):
         if addr in range(0xFF80, 0xFFFF):
             return f'HRAM_{addr-0xFF80:02X}'
-        else:
+        elif addr in self.IO_REGISTERS:
             return self.IO_REGISTERS[addr]
+        else:
+            # should not happen, probably bad disassembly but return something
+            return "UNK_%04X" % addr
 
     def _decode_instruction(self, data: bytes, addr: int):
         if len(data) == 0:
@@ -319,4 +323,11 @@ class LR35902(Architecture):
 
     def get_instruction_low_level_il(self, data, addr, il: LowLevelILFunction):
         return lift_il(data, addr, il)
+    
+    def get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il):
+        flag_il = lift_flag_il(op, size, write_type, flag, operands, il)
+        if flag_il:
+            return flag_il
+
+        return Architecture.get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il)
 
