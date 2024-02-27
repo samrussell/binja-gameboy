@@ -17,6 +17,8 @@ For a list of changes, read the [changelog](CHANGELOG).
 
 ### Todo
 * Fix sub_d (stop disas from 0)
+* Handle HALT/RESET/EI/DI opcodes in LLIL
+* Handle BCD (DAA opcode and test the half carry flag)
 * Thorough testing
 
 ## Installation
