@@ -13,9 +13,9 @@ For a list of changes, read the [changelog](CHANGELOG).
 * Added ISR symbols
 * Fixed some incorrect branching
 * Fixed some incorrect addressing modes
+* Implemented LLIL lifting
 
 ### Todo
-* Implement LLIL lifting
 * Fix sub_d (stop disas from 0)
 * Thorough testing
 

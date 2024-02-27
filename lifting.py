@@ -65,9 +65,8 @@ def decode_jp_conditional_a16(data, addr, il: LowLevelILFunction):
         cond = il.flag('c')
     else:
         return None
-    # if there are no flags to process here then assume the code is wrong
+    # if there are no flags to process here then stop, we'll reach this another way if it's real code
     if not cond:
-        print("addr %X, cond = 0, opcode = %X" % (addr, opcode))
         return None
 
     true_label = il.get_label_for_address(il.arch, dest_address)
@@ -116,9 +115,8 @@ def decode_call_conditional_a16(data, addr, il: LowLevelILFunction):
         cond = il.flag('c')
     else:
         return None
-    # if there are no flags to process here then assume the code is wrong
+    # if there are no flags to process here then stop, we'll reach this another way if it's real code
     if not cond:
-        print("addr %X, cond = 0, opcode = %X" % (addr, opcode))
         return None
 
     # we skip the label stuff from the relative jump because a call has to hit an address?
@@ -148,9 +146,8 @@ def decode_jr_conditional_r8(data, addr, il: LowLevelILFunction):
         cond = il.flag('c')
     else:
         return None
-    # if there are no flags to process here then assume the code is wrong
+    # if there are no flags to process here then stop, we'll reach this another way if it's real code
     if not cond:
-        print("addr %X, cond = 0, opcode = %X" % (addr, opcode))
         return None
 
     true_label = il.get_label_for_address(il.arch, dest_address)
@@ -186,9 +183,8 @@ def decode_ret_conditional(data, addr, il: LowLevelILFunction):
         cond = il.flag('c')
     else:
         return None
-    # if there are no flags to process here then assume the code is wrong
+    # if there are no flags to process here then stop, we'll reach this another way if it's real code
     if not cond:
-        print("addr %X, cond = 0, opcode = %X" % (addr, opcode))
         return None
     
     new_true_label = LowLevelILLabel()
@@ -1047,16 +1043,6 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
                 ),
                 il.const(1, 0)
             )
-        # leaving just in case
-        # elif op == LowLevelILOperation.LLIL_SBB:
-        #     return il.sub_borrow(size,
-        #         il.add(size,
-        #             expressionify(size, operands[0], il),
-        #             expressionify(size, operands[1], il),
-        #             il.flag("c"),
-        #         ),
-        #         il.const(1, 0)
-        #     )
     
     if flag == 'n':
         if op == LowLevelILOperation.LLIL_AND:
@@ -1083,6 +1069,7 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             return il.const(1, 0)
         elif op == LowLevelILOperation.LLIL_OR:
             return il.const(1, 0)
+        # these are yuck and only matter if we get DAA working
         elif op == LowLevelILOperation.LLIL_SUB:
             # only use bottom 4 bits of registers
             lhs = il.and_expr(size, il.const(size, 0x0F), expressionify(size, operands[0], il))
@@ -1133,39 +1120,3 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             operation = il.sub_borrow(size, lhs, rhs, il.flag("c"))
             # if we've overflowed then we'll be larger than when we started
             return il.compare_unsigned_greater_than(size, operation, lhs)
-
-        # elif op == LowLevelILOperation.LLIL_SUB:
-        #     return
-        #     # only use bottom 8 bits of registers, extend to 16 bits if needed
-        #     lhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[0], il)))
-        #     rhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[1], il)))
-        #     # perform operation
-        #     operation = il.sub(2, lhs, rhs)
-        #     # check bit 8
-        #     return il.test_bit(2, operation, il.const(2, 1<<8))
-        # elif op == LowLevelILOperation.LLIL_ADD:
-        #     return
-        #     # only use bottom 8 bits of registers, extend to 16 bits if needed
-        #     lhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[0], il)))
-        #     rhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[1], il)))
-        #     # perform operation
-        #     operation = il.add(2, lhs, rhs)
-        #     # check bit 8
-        #     return il.test_bit(2, operation, il.const(2, 1<<8))
-        # elif op == LowLevelILOperation.LLIL_ADC:
-        #     # only use bottom 8 bits of registers, extend to 16 bits if needed
-        #     lhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[0], il)))
-        #     rhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[1], il)))
-        #     # perform operation
-        #     operation = il.add_carry(2, lhs, rhs, il.flag("c"))
-        #     # check bit 8
-        #     return il.test_bit(2, operation, il.const(2, 1<<8))
-        # elif op == LowLevelILOperation.LLIL_SBB:
-        #     # only use bottom 8 bits of registers, extend to 16 bits if needed
-        #     lhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[0], il)))
-        #     rhs = il.and_expr(2, il.const(size, 0xFF), il.zero_extend(2, expressionify(size, operands[1], il)))
-        #     # perform operation
-        #     operation = il.sub_borrow(2, lhs, rhs, il.flag("c"))
-        #     # check bit 8
-        #     return il.test_bit(2, operation, il.const(2, 1<<8))
-

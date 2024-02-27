@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## WIP
+* Implemented lifting to LLIL
+* Fixed bug where we would read instructions from the end of the ROM and run out of data
+
 ## v1.1
 
 * Fixed bug caused by improper naming of `get_instruction_text`

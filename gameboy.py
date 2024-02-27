@@ -162,16 +162,19 @@ class LR35902(Architecture):
             return "UNK_%04X" % addr
 
     def _decode_instruction(self, data: bytes, addr: int):
-        if len(data) == 0:
+        if len(data[:1]) == 0:
             return self.INVALID_INS
         if data[0] == 0xCB:
-            if len(data) < 2:
+            if len(data[:2]) < 2:
                 return self.INVALID_INS
             ins_entry = self.opcodes['cbprefixed'].get('%#x' % data[1], None)
         else:
             ins_entry = self.opcodes['unprefixed'].get('%#x' % data[0], None)
 
         if not ins_entry:
+            return self.INVALID_INS
+        
+        if len(data[:3]) < ins_entry['length']:
             return self.INVALID_INS
 
         ins_operands = []
