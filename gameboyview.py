@@ -179,8 +179,10 @@ class GameboyRomView(BinaryView):
 
     # undocumented but looks to match arch.address_size
     # so should be in bytes and should equal arch.address_size
+    # but this breaks .synthetic_builtins when the rom mapping uses the whole memory
+    # so we'll leave it at 8
     def perform_get_address_size(self):
-        return 2
+        return 8
 
 
 #NUM_BANKS = 0x200
