@@ -274,7 +274,7 @@ def decode_arithmetic_logical_8bit(reg, opcode, data, addr, il: LowLevelILFuncti
     if opcode == ArithmeticLogicalOpcode.INC or opcode == ArithmeticLogicalOpcode.DEC:
         il.append(set_reg8_or_hl_pointer(reg, expression, il))
     elif opcode == ArithmeticLogicalOpcode.CMP:
-        pass
+        il.append(expression)
     else:
         il.append(il.set_reg(1, 'A', expression))
 
@@ -470,7 +470,7 @@ def decode_add_sp_r8(data, addr, il: LowLevelILFunction):
     il.append(il.set_reg(2, 'SP', expression))
     il.append(il.set_flag('z', il.const(1, 0)))
     return 2
-    
+
 
 handlers_by_opcode_cbprefixed = {
     0x0: partial(decode_rlc_reg8, 'B'),
