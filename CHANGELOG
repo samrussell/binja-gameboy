@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## WIP
+## v1.2
 * Implemented lifting to LLIL
 * Fixed bug where we would read instructions from the end of the ROM and run out of data
 
