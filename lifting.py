@@ -377,6 +377,38 @@ def decode_pop_reg16(reg, data, addr, il: LowLevelILFunction):
     il.append(il.set_reg(2, reg, il.pop(2)))
     return 1
 
+def decode_push_af(data, addr, il: LowLevelILFunction):
+    il.append(il.push(1, il.reg(1, 'A')))
+    # push flags
+    flags = il.or_expr(1,
+        il.or_expr(1,
+            il.flag_bit(1, 'z', 7),
+            il.flag_bit(1, 'n', 6),
+        ),
+        il.or_expr(1,
+            il.flag_bit(1, 'h', 5),
+            il.flag_bit(1, 'c', 4),
+        )
+    )
+    il.append(il.push(1, flags))
+    return 1
+
+def decode_pop_af(data, addr, il: LowLevelILFunction):
+    # pop flags
+    il.append(il.expr(LowLevelILOperation.LLIL_SET_REG,
+        LLIL_TEMP(0),
+        il.pop(1),
+        size = 1
+    ))
+    temp0 = il.expr(LowLevelILOperation.LLIL_REG, LLIL_TEMP(0), 1)
+    il.append(il.set_flag('z', il.test_bit(1, temp0, il.const(1, 1<<7))))
+    il.append(il.set_flag('n', il.test_bit(1, temp0, il.const(1, 1<<6))))
+    il.append(il.set_flag('h', il.test_bit(1, temp0, il.const(1, 1<<5))))
+    il.append(il.set_flag('c', il.test_bit(1, temp0, il.const(1, 1<<4))))
+
+    il.append(il.set_reg(1, 'A', il.pop(1)))
+    return 1
+
 def decode_rla(data, addr, il: LowLevelILFunction):
     il.append(il.set_reg(1, 'A', il.rotate_left(1, il.reg(1, 'A'), il.const(1, 1), 'nhc')))
     il.append(il.set_flag('z', il.const(1, 0)))
@@ -972,10 +1004,10 @@ handlers_by_opcode = {
     0xee: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.XOR),
     0xef: partial(decode_rst, 0x2f),
     0xf0: decode_set_a_a8,
-    0xf1: partial(decode_pop_reg16, 'AF'),
+    0xf1: decode_pop_af,
     0xf2: decode_set_a_c,
     0xf3: partial(decode_unimplemented, 1), # DI
-    0xf5: partial(decode_push_reg16, 'AF'),
+    0xf5: decode_push_af,
     0xf6: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.OR),
     0xf7: partial(decode_rst, 0x30),
     0xf8: decode_set_hl_sp_plus_d8,
@@ -1051,8 +1083,6 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             return il.const(1, 0)
         elif op == LowLevelILOperation.LLIL_OR:
             return il.const(1, 0)
-        elif op == LowLevelILOperation.LLIL_CMP:
-            return il.const(1, 1)
         elif op == LowLevelILOperation.LLIL_ADD:
             return il.const(1, 0)
         elif op == LowLevelILOperation.LLIL_ADC:

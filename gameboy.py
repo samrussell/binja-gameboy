@@ -20,7 +20,8 @@ class LR35902(Architecture):
 
     regs = {
         # Main registers
-        'AF': RegisterInfo('AF', 2),
+        'A': RegisterInfo('A', 1),
+        #'AF': RegisterInfo('AF', 2),
         'BC': RegisterInfo('BC', 2),
         'DE': RegisterInfo('DE', 2),
         'HL': RegisterInfo('HL', 2),
@@ -29,8 +30,8 @@ class LR35902(Architecture):
         'PC': RegisterInfo('PC', 2),
 
         # Sub registers
-        'A': RegisterInfo('AF', 1, 1),
-        'Flags': RegisterInfo('AF', 0),
+        #'A': RegisterInfo('AF', 1, 1),
+        #'Flags': RegisterInfo('AF', 0),
         'B': RegisterInfo('BC', 1, 1),
         'C': RegisterInfo('BC', 1, 0),
         'D': RegisterInfo('DE', 1, 1),
