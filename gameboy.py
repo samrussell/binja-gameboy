@@ -252,6 +252,10 @@ class LR35902(Architecture):
             elif atom in self.regs.keys():
                 result.append(InstructionTextToken(
                     InstructionTextTokenType.RegisterToken, atom))
+            elif atom == 'AF':
+                # sorry, downside to having fake regs in lifter
+                result.append(InstructionTextToken(
+                    InstructionTextTokenType.RegisterToken, atom))
             elif mnemonic in self.bit_instructions and atom in [str(x) for x in range(8)]:
                 result.append(InstructionTextToken(
                     InstructionTextTokenType.TextToken, atom))
