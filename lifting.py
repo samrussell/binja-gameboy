@@ -132,7 +132,7 @@ def decode_call_conditional_a16(data, addr, il: LowLevelILFunction):
 def decode_jr_conditional_r8(data, addr, il: LowLevelILFunction):
     instruction_length = 2
     next_instruction_addr = addr + instruction_length
-    offset = struct.unpack("<B", data[1:2])[0]
+    offset = struct.unpack("<b", data[1:2])[0]
     dest_address = next_instruction_addr + offset
     opcode = data[0]
 
@@ -496,7 +496,7 @@ def decode_ccf(data, addr, il: LowLevelILFunction):
     return 1
 
 def decode_add_sp_r8(data, addr, il: LowLevelILFunction):
-    arg = struct.unpack('<B', data[1:2])[0]
+    arg = struct.unpack('<b', data[1:2])[0]
     dest_reg = il.reg(2, 'SP')
     expression = il.add(2, dest_reg, il.sign_extend(2, il.const(1, arg)), 'nhc')
     il.append(il.set_reg(2, 'SP', expression))
