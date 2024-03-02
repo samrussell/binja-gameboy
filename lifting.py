@@ -382,12 +382,12 @@ def decode_push_af(data, addr, il: LowLevelILFunction):
     # push flags
     flags = il.or_expr(1,
         il.or_expr(1,
-            il.flag_bit(1, 'z', 7),
-            il.flag_bit(1, 'n', 6),
+            il.shift_left(1, il.flag('z'), il.const(1, 7)),
+            il.shift_left(1, il.flag('n'), il.const(1, 6)),
         ),
         il.or_expr(1,
-            il.flag_bit(1, 'h', 5),
-            il.flag_bit(1, 'c', 4),
+            il.shift_left(1, il.flag('h'), il.const(1, 5)),
+            il.shift_left(1, il.flag('c'), il.const(1, 4)),
         )
     )
     il.append(il.push(1, flags))
