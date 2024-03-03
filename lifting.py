@@ -36,8 +36,8 @@ def decode_rst(dest_address, data, addr, il: LowLevelILFunction):
     il.append(il.call(il.const_pointer(2, dest_address)))
     return 1
 
-def decode_jp_hl(data, addr, il: LowLevelILFunction):
-    il.append(il.jump(il.reg(2, 'HL')))
+def decode_jp_hl_deref(data, addr, il: LowLevelILFunction):
+    il.append(il.jump(il.load(2, il.reg(2, 'HL'))))
     return 1
 
 def decode_jp_unconditional_a16(data, addr, il: LowLevelILFunction):
@@ -1011,7 +1011,7 @@ handlers_by_opcode = {
     0xe6: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.AND),
     0xe7: partial(decode_rst, 0x20),
     0xe8: decode_add_sp_r8,
-    0xe9: decode_jp_hl,
+    0xe9: decode_jp_hl_deref,
     0xea: decode_set_a16_a,
     0xee: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.XOR),
     0xef: partial(decode_rst, 0x2f),
