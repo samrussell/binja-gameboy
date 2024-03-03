@@ -5,7 +5,7 @@ import struct
 
 from binaryninja.architecture import Architecture
 from binaryninja.enums import InstructionTextTokenType, FlagRole, BranchType, LowLevelILFlagCondition
-from binaryninja.function import RegisterInfo, InstructionInfo, InstructionTextToken
+from binaryninja.function import RegisterInfo, InstructionInfo, InstructionTextToken, IntrinsicInfo
 from binaryninja.log import log_info
 from binaryninja.lowlevelil import LowLevelILFunction, LowLevelILLabel
 from .lifting import lift_il, lift_flag_il
@@ -60,6 +60,13 @@ class LR35902(Architecture):
         LowLevelILFlagCondition.LLFC_NE:  ['z'],
         LowLevelILFlagCondition.LLFC_ULT:  ['c'],
         LowLevelILFlagCondition.LLFC_UGE:  ['c'],
+    }
+
+    intrinsics = {
+        'ei': IntrinsicInfo([], []),
+        'di': IntrinsicInfo([], []),
+        'stop': IntrinsicInfo([], []),
+        'halt': IntrinsicInfo([], []),
     }
 
     stack_pointer = "SP"

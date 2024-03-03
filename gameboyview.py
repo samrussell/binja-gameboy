@@ -128,8 +128,10 @@ class GameboyRomView(BinaryView):
         # ROM0
         self.add_auto_segment(self.ROM0_OFFSET, self.ROM0_SIZE, self.ROM0_OFFSET,
                               self.ROM0_SIZE, SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
+        # not doing SectionSemantics.ReadOnlyCodeSectionSemantics
+        # because linear sweep picks up too much data
         self.add_auto_section("ROM0", self.ROM0_OFFSET, self.ROM0_SIZE,
-                              SectionSemantics.ReadOnlyCodeSectionSemantics)
+                              SectionSemantics.DefaultSectionSemantics)
         # ROM1
         self.add_auto_segment(self.ROM1_OFFSET, self.ROM1_SIZE, self.ROM1_OFFSET,
                               self.ROM1_SIZE, SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
@@ -150,11 +152,14 @@ class GameboyRomView(BinaryView):
         self.define_auto_symbol(
             Symbol(SymbolType.FunctionSymbol, self.START_ADDR, "_start"))
         self.add_entry_point(self.START_ADDR)
+        # workaround to disable linear sweep
+        self.add_user_section("entrypoint", self.START_ADDR, 0x8, SectionSemantics.ReadOnlyCodeSectionSemantics)
 
         # Define interrupts
         for name, address in self.INTERRUPT_HANDLERS:
             self.define_auto_symbol(
                 Symbol(SymbolType.FunctionSymbol, address, name))
+            self.add_entry_point(address)
             #self.define_auto_symbol_and_var_or_function(Symbol(SymbolType.FunctionSymbol, address, name), Type.function(Type.void(), []))
 
         return True

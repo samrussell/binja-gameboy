@@ -409,41 +409,47 @@ def decode_pop_af(data, addr, il: LowLevelILFunction):
     il.append(il.set_reg(1, 'A', il.pop(1)))
     return 1
 
+# Rotate
+# The mnemonics are confusing, Rx rotates via carry
+def decode_rl_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_left_carry(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), il.flag('c'), 'znh'), il))
+    return 2
+
+def decode_rr_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_right_carry(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), il.flag('c'), 'znh'), il))
+    return 2
+
+# RxC is a normal rotate but copies old bit 7 to carry (will handle this in flag lifting)
+def decode_rlc_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_left(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
+    return 2
+
+def decode_rrc_reg8(reg, data, addr, il: LowLevelILFunction):
+    il.append(set_reg8_or_hl_pointer('A', il.rotate_right(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
+    return 2
+
+# Rotate A
+# these are like the generic ones except Z is always cleared
 def decode_rla(data, addr, il: LowLevelILFunction):
-    il.append(il.set_reg(1, 'A', il.rotate_left(1, il.reg(1, 'A'), il.const(1, 1), 'nhc')))
+    il.append(il.set_reg(1, 'A', il.rotate_left_carry(1, il.reg(1, 'A'), il.const(1, 1), il.flag('c'), 'nh')))
     il.append(il.set_flag('z', il.const(1, 0)))
     return 1
 
 def decode_rra(data, addr, il: LowLevelILFunction):
-    il.append(il.set_reg(1, 'A', il.rotate_right(1, il.reg(1, 'A'), il.const(1, 1), 'nhc')))
+    il.append(il.set_reg(1, 'A', il.rotate_right_carry(1, il.reg(1, 'A'), il.const(1, 1), il.flag('c'), 'nh')))
     il.append(il.set_flag('z', il.const(1, 0)))
     return 1
 
 def decode_rlca(data, addr, il: LowLevelILFunction):
-    il.append(il.set_reg(1, 'A', il.rotate_left_carry(1, il.reg(1, 'A'), il.const(1, 1), il.flag('c'), 'nhc')))
+    il.append(il.set_reg(1, 'A', il.rotate_left(1, il.reg(1, 'A'), il.const(1, 1), 'nhc')))
     il.append(il.set_flag('z', il.const(1, 0)))
     return 1
 
 def decode_rrca(data, addr, il: LowLevelILFunction):
-    il.append(il.set_reg(1, 'A', il.rotate_right_carry(1, il.reg(1, 'A'), il.const(1, 1), il.flag('c'), 'nhc')))
+    il.append(il.set_reg(1, 'A', il.rotate_right(1, il.reg(1, 'A'), il.const(1, 1), 'nhc')))
     il.append(il.set_flag('z', il.const(1, 0)))
     return 1
 
-def decode_rl_reg8(reg, data, addr, il: LowLevelILFunction):
-    il.append(set_reg8_or_hl_pointer('A', il.rotate_left(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
-    return 2
-
-def decode_rr_reg8(reg, data, addr, il: LowLevelILFunction):
-    il.append(set_reg8_or_hl_pointer('A', il.rotate_right(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
-    return 2
-
-def decode_rlc_reg8(reg, data, addr, il: LowLevelILFunction):
-    il.append(set_reg8_or_hl_pointer('A', il.rotate_left_carry(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), il.flag('c'), '*'), il))
-    return 2
-
-def decode_rrc_reg8(reg, data, addr, il: LowLevelILFunction):
-    il.append(set_reg8_or_hl_pointer('A', il.rotate_right_carry(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), il.flag('c'), '*'), il))
-    return 2
 
 def decode_sla_reg8(reg, data, addr, il: LowLevelILFunction):
     il.append(set_reg8_or_hl_pointer('A', il.shift_left(1, read_reg8_or_hl_pointer(reg, il), il.const(1, 1), '*'), il))
@@ -502,6 +508,10 @@ def decode_add_sp_r8(data, addr, il: LowLevelILFunction):
     il.append(il.set_reg(2, 'SP', expression))
     il.append(il.set_flag('z', il.const(1, 0)))
     return 2
+
+def decode_intrinsic(name, length, data, addr, il: LowLevelILFunction):
+    il.append(il.intrinsic([], name, []))
+    return length
 
 
 handlers_by_opcode_cbprefixed = {
@@ -787,7 +797,7 @@ handlers_by_opcode = {
     0xd: partial(decode_arithmetic_logical_8bit, 'C', ArithmeticLogicalOpcode.DEC),
     0xe: partial(decode_set_reg_d8, 'C'),
     0xf: decode_rrca,
-    0x10: partial(decode_unimplemented, 2), # STOP
+    0x10: partial(decode_intrinsic, 'stop', 2), # STOP
     0x11: partial(decode_set_reg_d16, 'DE'),
     0x12: partial(decode_set_reg16_pointer_reg8, 'DE', 'A'),
     0x13: partial(decode_arithmetic_logical_reg16, 'DE', 'DE', ArithmeticLogicalOpcode.INC),
@@ -810,7 +820,7 @@ handlers_by_opcode = {
     0x24: partial(decode_arithmetic_logical_8bit, 'H', ArithmeticLogicalOpcode.INC),
     0x25: partial(decode_arithmetic_logical_8bit, 'H', ArithmeticLogicalOpcode.DEC),
     0x26: partial(decode_set_reg_d8, 'H'),
-    0x27: partial(decode_unimplemented, 1), # DAA, this isn't done in Z80 either...
+    0x27: partial(decode_unimplemented, 1), # DAA, TODO copy from Z80
     0x28: decode_jr_conditional_r8,
     0x29: partial(decode_arithmetic_logical_reg16, 'HL', 'HL', ArithmeticLogicalOpcode.ADD),
     0x2a: partial(decode_set_reg8_reg16_pointer, 'A', 'HL+'),
@@ -889,7 +899,7 @@ handlers_by_opcode = {
     0x73: partial(decode_set_reg16_pointer_reg8, 'HL', 'E'),
     0x74: partial(decode_set_reg16_pointer_reg8, 'HL', 'H'),
     0x75: partial(decode_set_reg16_pointer_reg8, 'HL', 'L'),
-    0x76: partial(decode_unimplemented, 1), # HALT
+    0x76: partial(decode_intrinsic, 'halt', 1), # HALT
     0x77: partial(decode_set_reg16_pointer_reg8, 'HL', 'A'),
     0x78: partial(decode_set_reg_reg8, 'A', 'B'),
     0x79: partial(decode_set_reg_reg8, 'A', 'C'),
@@ -1006,14 +1016,14 @@ handlers_by_opcode = {
     0xf0: decode_set_a_a8,
     0xf1: decode_pop_af,
     0xf2: decode_set_a_c,
-    0xf3: partial(decode_unimplemented, 1), # DI
+    0xf3: partial(decode_intrinsic, 'di', 1), # DI
     0xf5: decode_push_af,
     0xf6: partial(decode_arithmetic_logical_8bit, 'd8', ArithmeticLogicalOpcode.OR),
     0xf7: partial(decode_rst, 0x30),
     0xf8: decode_set_hl_sp_plus_d8,
     0xf9: decode_set_sp_hl,
     0xfa: decode_set_a_a16,
-    0xfb: partial(decode_unimplemented, 1), # EI
+    0xfb: partial(decode_intrinsic, 'ei', 1), # EI
     0xfe: decode_cp_d8,
     0xff: partial(decode_rst, 0x3f),
 }
@@ -1091,6 +1101,14 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             return il.const(1, 1)
         elif op == LowLevelILOperation.LLIL_SBB:
             return il.const(1, 1)
+        elif op == LowLevelILOperation.LLIL_ROL:
+            return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_ROR:
+            return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_RLC:
+            return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_RRC:
+            return il.const(1, 0)
         
     if flag == 'h':
         if op == LowLevelILOperation.LLIL_AND:
@@ -1132,6 +1150,14 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             half_operation = il.sub_borrow(size, lhs, rhs, il.flag("c"))
             # check bit 4
             return il.test_bit(size, half_operation, il.const(size, 1<<4))
+        elif op == LowLevelILOperation.LLIL_ROL:
+            return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_ROR:
+            return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_RLC:
+            return il.const(1, 0)
+        elif op == LowLevelILOperation.LLIL_RRC:
+            return il.const(1, 0)
 
         
     if flag == 'c':
@@ -1150,3 +1176,7 @@ def lift_flag_il(op, size, write_type, flag, operands, il):
             operation = il.sub_borrow(size, lhs, rhs, il.flag("c"))
             # if we've overflowed then we'll be larger than when we started
             return il.compare_unsigned_greater_than(size, operation, lhs)
+        elif op == LowLevelILOperation.LLIL_ROL:
+            return il.test_bit(1, expressionify(size, operands[0], il), il.const(1, 1<<7))
+        elif op == LowLevelILOperation.LLIL_ROR:
+            return il.test_bit(1, expressionify(size, operands[0], il), il.const(1, 1<<7))

@@ -38,6 +38,7 @@ This plugin has been tested on the following versions of Binary Ninja:
 * [Gameboy Pan Docs](http://bgb.bircd.org/pandocs.htm)
 * [Gameboy opcodes](https://www.pastraiser.com/cpu/gameboy/gameboy_opcodes.html)
 * [Gekkio's Game Boy Complete Technical Reference](https://gekkio.fi/files/gb-docs/gbctr.pdf)
+* [Game Boy CPU Manual](http://marc.rawer.de/Gameboy/Docs/GBCPUman.pdf)
 
 ## Testing
 
