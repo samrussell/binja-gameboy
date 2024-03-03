@@ -190,9 +190,11 @@ def decode_ret_conditional(data, addr, il: LowLevelILFunction):
     new_true_label = LowLevelILLabel()
     new_false_label = LowLevelILLabel()
     il.append(il.if_expr(cond, new_true_label, new_false_label))
+    il.mark_label(new_false_label)
+    # workaround, jump over the ret
+    il.append(il.jump(il.const(2, addr + instruction_length)))
     il.mark_label(new_true_label)
     il.append(il.ret(il.pop(2)))
-    il.mark_label(new_false_label)
     
     return instruction_length
 
